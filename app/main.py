@@ -22,7 +22,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.APP_DEBUG else [],
+    allow_origins=["https://carbon-copy-cat.lovable.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
