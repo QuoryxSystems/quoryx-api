@@ -1,7 +1,7 @@
 import logging
 from collections import defaultdict
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -148,6 +148,15 @@ def _pair_to_dict(pair: IntercompanyTransaction, db: Session) -> dict:
         "transaction_date": pair.transaction_date.isoformat() if pair.transaction_date else None,
         "source_transaction_id": pair.source_transaction_id,
         "target_transaction_id": pair.target_transaction_id,
+        "confidence_score": pair.confidence_score,
+        "match_type": pair.match_type,
+        "amount_difference": pair.amount_difference,
+        "days_difference": pair.days_difference,
+        "match_reasons": pair.match_reasons,
+        "llm_reasoning": pair.llm_reasoning,
+        "review_required": pair.review_required,
+        "reviewed_at": pair.reviewed_at.isoformat() if pair.reviewed_at else None,
+        "reviewed_by": pair.reviewed_by,
         "created_at": pair.created_at.isoformat() if pair.created_at else None,
         "updated_at": pair.updated_at.isoformat() if pair.updated_at else None,
     }
@@ -173,41 +182,55 @@ def list_pairs(
 # PATCH /pairs/{id}/status
 # ---------------------------------------------------------------------------
 
-class StatusUpdate(BaseModel):
-    status: Literal["matched", "reconciled"]
+class ScorerUpdate(BaseModel):
+    status: Literal["matched", "review_required", "unmatched"]
+    confidence_score: Optional[float] = None
+    match_type: Optional[str] = None
+    amount_difference: Optional[float] = None
+    days_difference: Optional[int] = None
+    match_reasons: Optional[str] = None
+    llm_reasoning: Optional[str] = None
+    review_required: Optional[bool] = None
 
 
 @router.patch("/pairs/{pair_id}/status")
 def update_pair_status(
     pair_id: UUID,
-    body: StatusUpdate,
+    body: ScorerUpdate,
     db: Session = Depends(get_db),
 ):
     """
-    Transition an intercompany pair's status.
-    Allowed transitions: unmatched → matched → reconciled.
+    Update scorer results for an intercompany pair.
+    Accepts status plus optional scorer metadata fields.
+    All provided fields are written; omitted fields are left unchanged.
     """
     pair = db.get(IntercompanyTransaction, pair_id)
     if not pair:
         raise HTTPException(status_code=404, detail="Pair not found")
 
-    current = pair.status
-    new = body.status
+    previous_status = pair.status
+    pair.status = body.status
 
-    # Enforce forward-only transitions
-    order = {"unmatched": 0, "matched": 1, "reconciled": 2}
-    if order.get(new, -1) <= order.get(current, -1):
-        raise HTTPException(
-            status_code=409,
-            detail=f"Cannot transition from '{current}' to '{new}'. Status must move forward.",
-        )
+    if body.confidence_score is not None:
+        pair.confidence_score = body.confidence_score
+    if body.match_type is not None:
+        pair.match_type = body.match_type
+    if body.amount_difference is not None:
+        pair.amount_difference = body.amount_difference
+    if body.days_difference is not None:
+        pair.days_difference = body.days_difference
+    if body.match_reasons is not None:
+        pair.match_reasons = body.match_reasons
+    if body.llm_reasoning is not None:
+        pair.llm_reasoning = body.llm_reasoning
+    if body.review_required is not None:
+        pair.review_required = body.review_required
 
-    pair.status = new
     pair.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(pair)
 
-    logger.info("Pair %s transitioned %s → %s", pair_id, current, new)
+    logger.info("Pair %s updated %s → %s", pair_id, previous_status, body.status)
     return _pair_to_dict(pair, db)
 
 
@@ -257,3 +280,16 @@ def reconciliation_summary(db: Session = Depends(get_db)):
         "by_status": global_counts,
         "by_entity": by_entity,
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /run
+# ---------------------------------------------------------------------------
+
+@router.post("/run")
+def run_reconciliation(db: Session = Depends(get_db)):
+    """
+    Trigger a full reconciliation run.
+    Runs the same detection logic as /detect and returns a pair summary.
+    """
+    return detect_intercompany(db)

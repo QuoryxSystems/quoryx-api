@@ -2,7 +2,7 @@ from datetime import datetime
 import uuid
 import enum
 
-from sqlalchemy import Column, DateTime, Enum, ForeignKey, Numeric, String, Uuid
+from sqlalchemy import Boolean, Column, DateTime, Enum, Float, ForeignKey, Integer, Numeric, String, Text, Uuid
 from sqlalchemy.orm import relationship
 
 from app.models.database import Base
@@ -12,6 +12,7 @@ class IntercompanyStatus(str, enum.Enum):
     UNMATCHED = "unmatched"
     MATCHED = "matched"
     RECONCILED = "reconciled"
+    REVIEW_REQUIRED = "review_required"
 
 
 class Entity(Base):
@@ -59,6 +60,17 @@ class IntercompanyTransaction(Base):
     target_transaction_id = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Scorer columns
+    confidence_score = Column(Float, nullable=True)
+    match_type = Column(String(20), nullable=True)
+    amount_difference = Column(Float, nullable=True)
+    days_difference = Column(Integer, nullable=True)
+    match_reasons = Column(Text, nullable=True)
+    llm_reasoning = Column(Text, nullable=True)
+    review_required = Column(Boolean, nullable=True, default=False)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    reviewed_by = Column(String(255), nullable=True)
 
     source_entity = relationship(
         "Entity",
